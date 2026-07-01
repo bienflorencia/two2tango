@@ -1,0 +1,29 @@
+Package: two2tango
+Title: Simulate Pairs of Spatially Associated Virtual Species
+Version: 0.0.0.9000
+Authors@R: 
+    person("Florencia", "Grattarola", , "flograttarola@gmail.com", role = c("aut", "cre"), comment = c(ORCID = "0000-0001-8282-5732"))
+Description: Simulates pairs of virtual species with a known, tunable degree of spatial association, for testing and benchmarking species co-occurrence and association methods against a known ground truth.
+License: GPL (>= 3)
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports: 
+    dplyr,
+    magrittr,
+    mvtnorm,
+    rlang,
+    sf,
+    spatstat.geom,
+    spatstat.random,
+    stats,
+    terra
+Suggests: 
+    geodata,
+    gstat,
+    knitr,
+    quarto,
+    spatstat,
+    tidyverse,
+    tmap
+VignetteBuilder: quarto

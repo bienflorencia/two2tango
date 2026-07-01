@@ -1,9 +1,12 @@
-cff-version: 1.0.0
+cff-version: 1.2.0
 message: "If you use this software, please cite it as below."
+type: software
+title: "Two2tango: simulation of associated virtual species"
+version: 0.0.0.9000
+date-released: 2026-07-01
 authors:
 - family-names: "Grattarola"
   given-names: "Florencia"
   orcid: "https://orcid.org/0000-0001-8282-5732"
-title: "Two2tango: simulation of associated virtual species"
-date-released: 2025-03-31
+repository-code: "https://github.com/bienflorencia/two2tango"
 url: "https://github.com/bienflorencia/two2tango"

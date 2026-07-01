@@ -1,0 +1,12 @@
+citHeader("To cite two2tango in publications use:")
+
+bibentry(
+  bibtype = "Manual",
+  title   = "two2tango: Simulate Pairs of Spatially Associated Virtual Species",
+  author  = person("Florencia", "Grattarola",
+                    email = "flograttarola@gmail.com",
+                    comment = c(ORCID = "0000-0001-8282-5732")),
+  year    = "2026",
+  note    = sprintf("R package version %s", meta$Version),
+  url     = "https://github.com/bienflorencia/two2tango"
+)

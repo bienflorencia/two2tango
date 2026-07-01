@@ -1,0 +1,423 @@
+---
+title: "Introduction to `two2tango`"
+vignette: >
+  %\VignetteIndexEntry{Example Gaussian response}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{quarto::html}
+knitr:
+  opts_chunk:
+    collapse: true
+    comment: '#>'
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| label: setup
+#| message: false
+#| warning: false
+
+library(two2tango)
+library(spatstat)
+library(tmap)
+tmap_mode("plot")
+library(terra)
+library(gstat)
+library(sf)
+library(tidyverse)
+```
+
+`two2tango` simulates pairs of virtual species with a known, adjustable degree
+of spatial association, for testing and benchmarking species co-occurrence
+and association methods against a known ground truth.
+
+## How it works
+
+1. An environmental predictor (a `SpatRaster` or spatstat `im`) defines the
+   landscape.
+2. Each species' intensity is modeled as a function of that predictor —
+   Gaussian in `two2tango()`, linear in `two2waltz()`.
+3. Correlated Gaussian noise (controlled by `var.e` and `cov.e`) is added to
+   both species' log-intensity surfaces, inducing spatial association
+   between them independent of their individual environmental responses.
+4. Occurrence points for each species are sampled via an inhomogeneous
+   Poisson process (`spatstat.random::rpoispp()`) weighted by the resulting
+   intensity surface.
+5. The true correlation between the species' log-intensity surfaces — the
+   association driving the simulation — is returned alongside the simulated
+   points, so it can be compared against whatever you estimate from the
+   sampled data.
+
+## Gaussian response
+
+### Model for the virtual species
+
+The model assumes an underlying Poisson point pattern, and a Gaussian response:
+
+$\lambda_1 = peak_1 \times exp^{(-1/2 \times \dfrac{(predictor - \mu_1)^2}{\sigma_1^2} + e_1)}$  
+$\lambda_2 = peak_2 \times exp^{(-1/2 \times \dfrac{(predictor - \mu_2)^2}{\sigma_2^2} + e_2)}$  
+
+$e_{ij} \sim \textsf{MVN}(0, \Sigma)$  
+
+Where, $\Sigma = \begin{bmatrix} var_{1,1} & cov_{1,2} \\ cov_{2,1} & var_{2,2} \end{bmatrix}$  
+
+The inverse of the covariance matrix is called the precision matrix, denoted by $\tau = {\Sigma}^{-1}$.
+
+### Function
+
+The function `two2tango()` needs the following arguments:
+
+  - `mu_1` = $\mu_1$ and `mu_2` = $\mu_2$: the mean of the response curve (niche mean) for each species,   
+  - `sigma_1` = $\sigma_1$ and `sigma_2` = $\sigma_2$: the SD of the response curve (niche breath) for each species,  
+  - `peak_1` = $peak_1$ and `peak_2` = $peak_2$: constants that set the expected abundance at the mean,   
+  - `var` = $var_{1,1}$ = $var_{2,2}$: the variance of each species, which will always be set to `1`, 
+  - `cov` = $cov_{1,2}$ and $cov_{2,1}$: the covariance of one species against the other, which needs to be symmetric.  
+
+Then it returns a list with two `sf` objects of `POINT` geometry, one for each species, and the Pearson correlation at the level of the Poisson process.
+
+:::{.callout-note}
+The function `as.im.SpatRaster()` is not yet on CRAN for `spatstat`. See question in Stack overflow [Convert raster (terra) to im object (spatstat)](https://stackoverflow.com/questions/77916041/convert-raster-terra-to-im-object-spatstat).
+:::
+
+## Test the function
+
+We will use as an example predictor the average annual temperature for Uruguay
+
+```{r}
+#| label: predictor
+#| message: false
+#| warning: false
+
+uruguay <- geodata::gadm(country = 'UY', level=0, path = 'data/')
+temperature <- geodata::worldclim_country('UY', var = 'tavg', path = 'data/')
+temperature <- mean(temperature, na.rm=T) %>% mask(uruguay)
+temp <- scale(temperature) %>% 
+  aggregate(10)
+
+
+tm_shape(temp) + 
+  tm_raster(col.scale = tm_scale_continuous(midpoint = NA, values = 'brewer.rd_bu'), 
+            col.legend = tm_legend('temperature')) +
+tm_shape(uruguay) +
+  tm_borders() + 
+  tm_layout(frame=F, legend.frame = F)
+```
+
+### Case 1
+
+Species have the same niche and co-occur
+
+|       | $\mu_1$  | $\sigma_1$ | $peak_1$ | $var$ | $cov$ |
+|-------|----------|------------|----------|-------|-------|
+| `sp1` | 0.5      | 0.5        | 60       | 1     | 0.9   |
+| `sp2` | 0.5      | 0.5        | 60       | 1     | 0.9   |
+
+
+```{r}
+#| label: gaussian-case1
+
+mu1 = 1
+mu2 = 1
+sigma1 = 0.5
+sigma2 = 0.5
+peak1 = 0.01
+peak2 = 0.01
+cov.e= 0.9
+var.e = 1
+
+simulated_species <- two2tango(peak1=peak1, peak2=peak2,
+                               mu1=mu1, sigma1=sigma1,
+                               mu2=mu2, sigma2=sigma2,
+                               cov.e=cov.e, var.e=var.e,
+                               predictor = temp)
+
+sp1 <- simulated_species[[1]] %>% mutate(species = 'sp1')
+sp2 <- simulated_species[[2]] %>% mutate(species = 'sp2')
+
+cor.pp <-  simulated_species[[3]]
+
+tm_shape(temp) + 
+  tm_raster(col.scale = tm_scale_continuous(midpoint = NA, values = 'brewer.rd_bu'), 
+            col.legend = tm_legend('')) +
+tm_shape(uruguay) + tm_borders() +
+tm_shape(sp1) + 
+  tm_dots(fill='species', 
+          fill.scale = tm_scale_categorical(values='grey90'), 
+          fill.legend = tm_legend('', frame=F), size = 0.5) +
+tm_shape(sp2) + 
+  tm_dots(fill='species', 
+          fill.scale = tm_scale_categorical(values='black'),
+          fill.legend = tm_legend(''), size = 0.5) + 
+  tm_layout(frame=F, legend.frame = F) +
+   tm_title(text = str_glue('cor = {round(cor.pp$estimate,3)}'))
+```
+
+The correlation at the level of the Poisson process between species is r = `r round(cor.pp$estimate,3)`.
+
+```{r}
+#| label: gaussian-case1-plot
+#| code-fold: true
+
+spec.response.tango <- function(x, mu, peak, sigma) {
+    # peak1*exp(-0.5*((predictor-mu1)^2)/(sigma1^2) + e[,1])
+    y <- peak*exp(-0.5*((x-mu)^2)/(sigma^2))
+    return(y)
+}
+
+response.df <- tibble(x = seq(-3, 3, by = 0.01),
+                      y1 = spec.response.tango(x, mu1, peak1, sigma1),
+                      y2 = spec.response.tango(x, mu2, peak2, sigma2))
+
+ggplot() +
+    geom_line(data=response.df, aes(x=x, y=y1), col='red', linetype = 'dashed') + 
+    geom_point(data=response.df, aes(x=x, y=y1), col='red') + 
+    geom_line(data=response.df, aes(x=x, y=y2), col='black') + 
+    geom_line(data=response.df, aes(x=x, y=y2), col='black') + 
+    labs(y='Y') + theme_bw()
+```
+
+
+
+### Case 2
+
+Species have a different niche and negative co-occurrence
+
+|       | $\mu_1$  | $\sigma_1$ | $peak_1$ | $var$ | $cov$ |
+|-------|----------|------------|----------|-------|-------|
+| `sp1` | 0.25     | 0.5        | 60       | 1     | -0.9  |
+| `sp2` | -0.25    | 0.5        | 60       | 1     | -0.9  |
+
+
+```{r}
+#| label: gaussian-case2
+
+mu1 = 1
+mu2 = -1
+sigma1 = 0.5
+sigma2 = 0.5
+peak1 = 0.01
+peak2 = 0.01
+cov.e = -0.9
+var.e = 1
+
+simulated_species <- two2tango(peak1=peak1, peak2=peak2,
+                               mu1=mu1, sigma1=sigma1,
+                               mu2=mu2, sigma2=sigma2,
+                               cov.e=cov.e, var.e=var.e,
+                               predictor = temp)
+
+sp1 <- simulated_species[[1]] %>% mutate(species = 'sp1')
+sp2 <- simulated_species[[2]] %>% mutate(species = 'sp2')
+
+cor.pp <-  simulated_species[[3]]
+
+tm_shape(temp) + 
+  tm_raster(col.scale = tm_scale_continuous(midpoint = NA, values = 'brewer.rd_bu'), 
+            col.legend = tm_legend('')) +
+tm_shape(uruguay) + tm_borders() +
+tm_shape(sp1) + 
+  tm_dots(fill='species', 
+          fill.scale = tm_scale_categorical(values='grey90'), 
+          fill.legend = tm_legend('', frame=F), size = 0.5) +
+tm_shape(sp2) + 
+  tm_dots(fill='species', 
+          fill.scale = tm_scale_categorical(values='black'),
+          fill.legend = tm_legend(''), size = 0.5) + 
+  tm_layout(frame=F, legend.frame = F) +
+   tm_title(text = str_glue('cor = {round(cor.pp$estimate,3)}'))
+```
+
+
+```{r}
+#| label: gaussian-case2-plot
+#| code-fold: true
+
+response.df <- tibble(x = seq(-3, 3, by = 0.01),
+                      y1 = spec.response.tango(x, mu1, peak1, sigma1),
+                      y2 = spec.response.tango(x, mu2, peak2, sigma2))
+
+ggplot() +
+    geom_line(data=response.df, aes(x=x, y=y1), col='red', linetype = 'dashed') + 
+    geom_point(data=response.df, aes(x=x, y=y1), col='red') + 
+    geom_line(data=response.df, aes(x=x, y=y2), col='black') + 
+    geom_line(data=response.df, aes(x=x, y=y2), col='black') + 
+    labs(y='Y') + theme_bw()
+```
+
+
+## Linear response
+
+### Model for the virtual species
+
+The model assumes an underlying Poisson point pattern, and a Gaussian response:
+
+$\lambda_1 = exp^{\alpha_1 + \beta_1 \times predictor + e_1)}$   
+$\lambda_2 = exp^{\alpha_2 + \beta_2 \times predictor + e_2)}$   
+
+$e_{ij} \sim \textsf{MVN}(0, \Sigma)$  
+
+Where, $\Sigma = \begin{bmatrix} var_{1,1} & cov_{1,2} \\ cov_{2,1} & var_{2,2} \end{bmatrix}$  
+
+The inverse of the covariance matrix is called the precision matrix, denoted by $\tau = {\Sigma}^{-1}$.  
+
+### Function
+
+The function `two2waltz()` needs the following arguments:
+
+  - `alpha_1` = $\alpha_1$ and `alpha_2` = $\alpha_2$: the intercept of the response (niche mean) for each species,   
+  - `beta_1` = $\beta_1$ and `beta_2` = $\beta_2$: the SD of the response curve (niche breath) for each species,  
+  - `var` = $var_{1,1}$ = $var_{2,2}$: the variance of each species, which will always be set to `1`, 
+  - `cov` = $cov_{1,2}$ and $cov_{2,1}$: the covariance of one species against the other, which needs to be symmetric.  
+
+Then it returns a list with two `sf` objects of `POINT` geometry, one for each species, and the Pearson correlation at the level of the Poisson process.
+
+## Test the function
+
+We will use the same predictor as before, the average annual temperature for Uruguay.  
+
+```{r}
+#| label: predictor-plot
+#| message: false
+#| warning: false
+
+tm_shape(temp) + 
+  tm_raster(col.scale = tm_scale_continuous(midpoint = NA, values = 'brewer.rd_bu'), 
+            col.legend = tm_legend('temperature')) +
+tm_shape(uruguay) +
+  tm_borders() + 
+  tm_layout(frame=F, legend.frame = F)
+```
+
+### Case 1
+
+Species have the same niche and co-occur
+
+|       | $\alpha_1$ | $\beta_1$ | $var$ | $cov$ |
+|-------|------------|-----------|-------|-------|
+| `sp1` | -1         | 0.01      | 1     | 0.9   |
+| `sp2` | -1         | 0.01      | 1     | 0.9   |
+
+
+```{r}
+#| label: linear-case1
+
+alpha1 = -2
+alpha2 = -2
+beta1 = 1
+beta2 = 1
+cov.e = 0.9
+var.e = 1
+
+simulated_species <- two2waltz(alpha1=alpha1, alpha2=alpha2,
+                            beta1=beta1, beta2=beta2,
+                            cov.e=cov.e, var.e=var.e,
+                            predictor = temp)
+
+sp1 <- simulated_species[[1]] %>% mutate(species = 'sp1')
+sp2 <- simulated_species[[2]] %>% mutate(species = 'sp2')
+
+cor.pp <-  simulated_species[[3]]
+
+tm_shape(temp) + 
+  tm_raster(col.scale = tm_scale_continuous(midpoint = NA, values = 'brewer.rd_bu'), 
+            col.legend = tm_legend('')) +
+tm_shape(uruguay) + tm_borders() +
+tm_shape(sp1) + 
+  tm_dots(fill='species', 
+          fill.scale = tm_scale_categorical(values='grey90'), 
+          fill.legend = tm_legend('', frame=F), size = 0.5) +
+tm_shape(sp2) + 
+  tm_dots(fill='species', 
+          fill.scale = tm_scale_categorical(values='black'),
+          fill.legend = tm_legend(''), size = 0.5) + 
+  tm_layout(frame=F, legend.frame = F) +
+   tm_title(text = str_glue('cor = {round(cor.pp$estimate,3)}'))
+```
+
+The correlation at the level of the Poisson process between species is r = `r round(cor.pp$estimate,3)`.
+
+```{r}
+#| label: linear-case1-plot
+#| code-fold: true
+
+spec.response.waltz <- function(x, alpha, beta) {
+  # exp(alpha1 + beta1*predictor + e[,1])
+  y <- exp(alpha + beta*x)
+  return(y)
+}
+
+response.df <- tibble(x = seq(-3, 3, by = 0.01),
+                      y1 = spec.response.waltz(x, alpha1, beta1),
+                      y2 = spec.response.waltz(x, alpha2, beta2))
+
+ggplot() +
+    geom_line(data=response.df, aes(x=x, y=y1), col='red', linetype = 'dashed') + 
+    geom_point(data=response.df, aes(x=x, y=y1), col='red') + 
+    geom_line(data=response.df, aes(x=x, y=y2), col='black') + 
+    geom_line(data=response.df, aes(x=x, y=y2), col='black') + 
+    labs(y='Y') + theme_bw()
+```
+
+### Case 2
+
+Species have a different niche and negative co-occurrence
+
+|       | $\alpha_1$ | $\beta_1$ | $var$ | $cov$ |
+|-------|------------|-----------|-------|-------|
+| `sp1` | -2         | 1         | 1     | -0.9  |
+| `sp2` | -2         | -1        | 1     | -0.9  |
+
+
+```{r}
+#| label: linear-case2
+
+alpha1 = -2
+alpha2 = -2
+beta1 = 1
+beta2 = -1
+cov.e = -0.9
+var.e = 1
+
+simulated_species <- two2waltz(alpha1=alpha1, alpha2=alpha2,
+                            beta1=beta1, beta2=beta2,
+                            cov.e=cov.e, var.e=var.e,
+                            predictor = temp)
+
+sp1 <- simulated_species[[1]] %>% mutate(species = 'sp1')
+sp2 <- simulated_species[[2]] %>% mutate(species = 'sp2')
+
+cor.pp <-  simulated_species[[3]]
+
+tm_shape(temp) + 
+  tm_raster(col.scale = tm_scale_continuous(midpoint = NA, values = 'brewer.rd_bu'), 
+            col.legend = tm_legend('')) +
+tm_shape(uruguay) + tm_borders() +
+tm_shape(sp1) + 
+  tm_dots(fill='species', 
+          fill.scale = tm_scale_categorical(values='grey90'), 
+          fill.legend = tm_legend('', frame=F), size = 0.5) +
+tm_shape(sp2) + 
+  tm_dots(fill='species', 
+          fill.scale = tm_scale_categorical(values='black'),
+          fill.legend = tm_legend(''), size = 0.5) + 
+  tm_layout(frame=F, legend.frame = F) +
+   tm_title(text = str_glue('cor = {round(cor.pp$estimate,3)}'))
+```
+
+The correlation at the level of the Poisson process between species is r = `r round(cor.pp$estimate,3)`.
+
+```{r}
+#| label: linear-case2-plot
+#| code-fold: true
+
+response.df <- tibble(x = seq(-3, 3, by = 0.01),
+                      y1 = spec.response.waltz(x, alpha1, beta1),
+                      y2 = spec.response.waltz(x, alpha2, beta2))
+
+ggplot() +
+    geom_line(data=response.df, aes(x=x, y=y1), col='red', linetype = 'dashed') + 
+    geom_point(data=response.df, aes(x=x, y=y1), col='red') + 
+    geom_line(data=response.df, aes(x=x, y=y2), col='black') + 
+    geom_line(data=response.df, aes(x=x, y=y2), col='black') + 
+    labs(y='Y') + theme_bw()
+```
